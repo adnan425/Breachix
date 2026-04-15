@@ -23,7 +23,7 @@ Tooling referenced in that policy (Task agents, TodoWrite, Bash, Read, Glob, Gre
 
 Follow every analytical and reporting requirement from the Breachix system message using ONLY the repository snapshot in this user message.
 
-Legacy path strings that appear inside the bundled policy (for example under \`.shannon/\`) are not created by Breachix. Breachix stores the final markdown in its own database—put the full report in your reply. If the policy mentions copying schemas to a \`.shannon/deliverables/schemas/\` tree, instead list schema paths and implications in Attack Surface and Critical File Paths.
+Legacy path strings that appear inside the bundled policy (for example under \`.breachix/\`) are not created by Breachix. Breachix stores the final markdown in its own database—put the full report in your reply. If the policy mentions copying schemas to a \`.breachix/deliverables/schemas/\` tree, instead list schema paths and implications in Attack Surface and Critical File Paths.
 
 `;
 

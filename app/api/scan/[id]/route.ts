@@ -13,6 +13,10 @@ export async function GET(
   let progress = 0;
   let agentStatus = "";
 
+  let reconPhase = "";
+  let reconProgress = 0;
+  let reconAgentStatus = "";
+
   if (scan.triggerRunId && scan.status === "running") {
     try {
       const run = await runs.retrieve(scan.triggerRunId);
@@ -30,5 +34,30 @@ export async function GET(
     phase = "Complete";
   }
 
-  return Response.json({ scan, phase, progress, agentStatus });
+  if (scan.reconTriggerRunId && scan.reconStatus === "running") {
+    try {
+      const run = await runs.retrieve(scan.reconTriggerRunId);
+      const meta = run.metadata as Record<string, unknown> | undefined;
+      reconPhase = (meta?.["phase"] as string) ?? "";
+      reconProgress = (meta?.["progress"] as number) ?? 0;
+      reconAgentStatus = (meta?.["agentStatus"] as string) ?? "";
+    } catch {
+      // run not yet visible
+    }
+  }
+
+  if (scan.reconStatus === "completed") {
+    reconProgress = 100;
+    reconPhase = "Complete";
+  }
+
+  return Response.json({
+    scan,
+    phase,
+    progress,
+    agentStatus,
+    reconPhase,
+    reconProgress,
+    reconAgentStatus,
+  });
 }

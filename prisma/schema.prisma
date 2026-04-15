@@ -14,14 +14,17 @@ model Settings {
 }
 
 model Scan {
-  id            String   @id @default(cuid())
-  targetUrl     String
-  repoPath      String
-  environment   String
-  workspaceName String?
-  status        String   @default("pending")
-  triggerRunId  String?
-  deliverable   String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id               String   @id @default(cuid())
+  targetUrl        String
+  repoPath         String
+  environment      String
+  workspaceName    String?
+  status           String   @default("pending")
+  triggerRunId     String?
+  deliverable      String?
+  reconStatus      String?
+  reconTriggerRunId String?
+  reconDeliverable String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }

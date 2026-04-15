@@ -60,3 +60,24 @@ export async function updateScanStatus(
     data: { status, ...(deliverable !== undefined && { deliverable }) },
   });
 }
+
+export async function updateReconRunId(id: string, reconTriggerRunId: string) {
+  return prisma.scan.update({
+    where: { id },
+    data: { reconTriggerRunId, reconStatus: "running", reconDeliverable: null },
+  });
+}
+
+export async function updateReconStatus(
+  id: string,
+  reconStatus: string,
+  reconDeliverable?: string,
+) {
+  return prisma.scan.update({
+    where: { id },
+    data: {
+      reconStatus,
+      ...(reconDeliverable !== undefined && { reconDeliverable }),
+    },
+  });
+}

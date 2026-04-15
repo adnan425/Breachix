@@ -22,6 +22,7 @@ interface ScanRow {
   targetUrl: string;
   repoPath: string;
   status: string;
+  reconStatus?: string | null;
   createdAt: string | Date;
 }
 
@@ -70,7 +71,12 @@ export function HomeTabs({ initialSettings, initialScans }: HomeTabsProps) {
   const [settingsError,  setSettingsError]  = useState<string | null>(null);
 
   // Poll scans list every 4 s when any run is active
-  const hasActive = scans.some((s) => s.status === "running" || s.status === "pending");
+  const hasActive = scans.some(
+    (s) =>
+      s.status === "running" ||
+      s.status === "pending" ||
+      s.reconStatus === "running",
+  );
 
   const refreshScans = useCallback(async () => {
     try {
