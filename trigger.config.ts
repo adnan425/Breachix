@@ -1,4 +1,5 @@
 import { defineConfig } from "@trigger.dev/sdk/v3";
+import { additionalFiles } from "@trigger.dev/build/extensions/core";
 
 export default defineConfig({
   project: "proj_oaexfrhqalowlforgrsg",
@@ -19,4 +20,7 @@ export default defineConfig({
     },
   },
   dirs: ["./src/trigger"],
+  build: {
+    extensions: [additionalFiles({ files: ["./src/prompts/**"] })],
+  },
 });

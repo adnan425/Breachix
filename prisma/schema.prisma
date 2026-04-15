@@ -1,0 +1,27 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Settings {
+  id        Int    @id @default(1)
+  ollamaUrl String @default("http://localhost:11434")
+  model     String @default("qwen2.5:7b")
+}
+
+model Scan {
+  id            String   @id @default(cuid())
+  targetUrl     String
+  repoPath      String
+  environment   String
+  workspaceName String?
+  status        String   @default("pending")
+  triggerRunId  String?
+  deliverable   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}

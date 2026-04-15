@@ -1,36 +1,58 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Breachix
 
-## Getting Started
+Local tool to kick off a **pre-recon** pass over a repo path: the UI stores **LLM base URL + model**, creates a scan row, and **Trigger.dev** runs the worker below.
 
-First, run the development server:
+## Pre-recon agent (`pre-recon-agent`)
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+Task id **`pre-recon-agent`** in `src/trigger/pre-recon-agent.ts`.
+
+1. **Policy** — Loads `src/prompts/pre-recon-code.txt` as the system prompt (`{{REPO_PATH}}` / `{{DESCRIPTION}}` substituted). Six quoted specialist lines in that file are parsed and drive sub-prompts.
+2. **Repo snapshot** — Walks `repoPath` on the worker (skips heavy dirs), includes selected file contents and git-ignored paths.
+3. **LLM** — OpenAI SDK against any **OpenAI-compatible** `baseUrl/v1` server (`src/lib/ai-client.ts`).
+4. **Phases** — **Phase 1:** three parallel chats (architecture, entry points, security patterns). **Phase 2:** three parallel chats (injection sinks, SSRF, data security). **Phase 3:** one synthesis pass into the final markdown report.
+5. **Scope** — Runtime prefix tells the model file/Task/Bash tools from the policy are **not** available; answers use only the snapshot. Result is stored on the scan (`completed` / `failed` + deliverable). Trigger `metadata` carries `phase`, `progress`, `agentStatus`.
+
+## Run it
+
+1. `npm install` → `npx prisma migrate dev` → `npx prisma generate`
+2. `.env` (names are legacy; values are just API root + model):
+
+```env
+DATABASE_URL="file:./dev.db"
+OLLAMA_URL="https://your-api-host"
+OLLAMA_MODEL="your-model-id"
+TRIGGER_SECRET_KEY="from Trigger.dev dashboard"
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+3. Worker must reach that API. Two terminals: `npm run dev` and `npx trigger.dev@latest dev`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Layout
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Path | Role |
+|------|------|
+| `app/api/` | Settings, scan start, scan by id, list scans |
+| `src/trigger/` | Trigger task definitions |
+| `src/lib/` | DB, chat client, prompt helpers |
+| `src/prompts/` | Pre-recon policy text |
 
-## Learn More
+The bundled policy text is adapted from a Shannon-style pre-recon spec; Breachix does not run Shannon’s tooling or `.shannon/` deliverable paths—it reproduces the **analytical intent** with snapshot + LLM only.
 
-To learn more about Next.js, take a look at the following resources:
+## After pre-recon (Shannon’s pipeline)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+In [Shannon](https://github.com/KeygraphHQ/shannon), **pre-recon** is only **phase 1**. Next comes:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| Shannon phase | What it does | Breachix today |
+|-----------------|----------------|----------------|
+| **2 — Reconnaissance** | Live app + browser automation; attack-surface map tied to the running target | Not implemented |
+| **3 — Vulnerability analysis** | Parallel OWASP-style agents; outputs **hypothesized** exploitable paths | Not implemented |
+| **4 — Exploitation** | Real attacks against the app; **no exploit → no report** | Not implemented |
+| **5 — Reporting** | Final pentest-style report with PoCs | Pre-recon only stores its own markdown report |
 
-## Deploy on Vercel
+**Practical order to build toward parity (without copying Shannon’s Docker/Temporal stack):**
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+1. **Optional inputs** — Feed real nmap / subfinder / whatweb output into the same scan (file upload or paths), like Shannon’s pre-recon expects external recon.
+2. **New Trigger task: “recon-lite” or extend scan** — Given `targetUrl`, optional headless **crawl** (e.g. Playwright) + sitemap/API discovery text, merged with the pre-recon deliverable for a **phase-2-style** map (still read-only if you want).
+3. **New task: vulnerability analysis** — Input = pre-recon deliverable + snapshot (+ crawl). Output = structured **hypotheses** per category (Injection, XSS, Auth, Authz, SSRF), parallel LLM calls—Shannon phase 3 without exploitation.
+4. **Exploitation** — Only in an isolated lab with explicit authorization; needs a separate design (browser + mutative actions), not a small follow-on.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Shannon Lite runs the full chain in Docker with Claude Agent SDK; Breachix can mirror **phase order and artifacts** first, then add **dynamic** steps when you are ready for Playwright and legal/safety constraints.
