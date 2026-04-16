@@ -81,3 +81,24 @@ export async function updateReconStatus(
     },
   });
 }
+
+export async function updateVulnRunId(id: string, vulnTriggerRunId: string) {
+  return prisma.scan.update({
+    where: { id },
+    data: { vulnTriggerRunId, vulnStatus: "running", vulnDeliverable: null },
+  });
+}
+
+export async function updateVulnStatus(
+  id: string,
+  vulnStatus: string,
+  vulnDeliverable?: string,
+) {
+  return prisma.scan.update({
+    where: { id },
+    data: {
+      vulnStatus,
+      ...(vulnDeliverable !== undefined && { vulnDeliverable }),
+    },
+  });
+}

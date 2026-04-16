@@ -17,6 +17,9 @@ interface Scan {
   reconStatus: string | null;
   reconTriggerRunId: string | null;
   reconDeliverable: string | null;
+  vulnStatus: string | null;
+  vulnTriggerRunId: string | null;
+  vulnDeliverable: string | null;
   createdAt: Date;
 }
 
@@ -40,8 +43,16 @@ const PHASE_LABELS: Record<string, string> = {
 };
 
 const RECON_PHASE_LABELS: Record<string, string> = {
-  "Fetching live target": "Fetching live target…",
-  "Reconnaissance synthesis": "Correlating code + live surface…",
+  "Live surface": "Playwright + HTTP discovery…",
+  "Fetching live target": "Playwright + HTTP discovery…",
+  "Reconnaissance synthesis": "Correlating code + browser + HTTP…",
+  "Complete": "Complete",
+};
+
+const VULN_PHASE_LABELS: Record<string, string> = {
+  "Repository snapshot": "Building repository snapshot…",
+  "Parallel specialists": "Running five OWASP-line specialists in parallel…",
+  "Synthesis": "Synthesizing vulnerability hypotheses…",
   "Complete": "Complete",
 };
 
@@ -62,10 +73,16 @@ export function ScanStatus({ scan: initialScan }: { scan: Scan }) {
   const [reconAgentStatus, setReconAgentStatus] = useState<string>("");
   const [reconStarting, setReconStarting] = useState(false);
   const [reconStartError, setReconStartError] = useState<string | null>(null);
+  const [vulnPhase, setVulnPhase] = useState<string>("");
+  const [vulnProgress, setVulnProgress] = useState(0);
+  const [vulnAgentStatus, setVulnAgentStatus] = useState<string>("");
+  const [vulnStarting, setVulnStarting] = useState(false);
+  const [vulnStartError, setVulnStartError] = useState<string | null>(null);
 
   const preReconDone = scan.status === "completed" || scan.status === "failed";
   const reconPolling = scan.reconStatus === "running";
-  const shouldPoll = !preReconDone || reconPolling;
+  const vulnPolling = scan.vulnStatus === "running";
+  const shouldPoll = !preReconDone || reconPolling || vulnPolling;
 
   // Poll while pre-recon is active or reconnaissance is running
   useEffect(() => {
@@ -82,6 +99,9 @@ export function ScanStatus({ scan: initialScan }: { scan: Scan }) {
         setReconPhase(data.reconPhase ?? "");
         setReconProgress(data.reconProgress ?? 0);
         setReconAgentStatus(data.reconAgentStatus ?? "");
+        setVulnPhase(data.vulnPhase ?? "");
+        setVulnProgress(data.vulnProgress ?? 0);
+        setVulnAgentStatus(data.vulnAgentStatus ?? "");
       } catch {
         // ignore transient errors
       }
@@ -111,12 +131,34 @@ export function ScanStatus({ scan: initialScan }: { scan: Scan }) {
     }
   }
 
+  async function startVuln() {
+    setVulnStarting(true);
+    setVulnStartError(null);
+    try {
+      const res = await fetch(`/api/scan/${scan.id}/vuln`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+      const refreshed = await fetch(`/api/scan/${scan.id}`);
+      if (refreshed.ok) {
+        const full = await refreshed.json();
+        setScan(full.scan);
+        setVulnPhase(full.vulnPhase ?? "");
+        setVulnProgress(full.vulnProgress ?? 0);
+        setVulnAgentStatus(full.vulnAgentStatus ?? "");
+      }
+    } catch (e) {
+      setVulnStartError(e instanceof Error ? e.message : "Failed to start analysis");
+    } finally {
+      setVulnStarting(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-sm font-medium text-muted-foreground">
-            Breachix · Pre-recon (phase 1) + Reconnaissance (phase 2)
+            Breachix · Pre-recon (1), reconnaissance (2), vulnerability hypotheses (3)
           </p>
           <h1 className="text-2xl font-semibold tracking-tight truncate max-w-xl">
             {scan.targetUrl}
@@ -198,11 +240,13 @@ export function ScanStatus({ scan: initialScan }: { scan: Scan }) {
           <CardHeader>
             <CardTitle>Phase 2 — Reconnaissance</CardTitle>
             <CardDescription>
-              Read-only HTTP discovery (target page,{" "}
+              System prompt matches Shannon{" "}
+              <span className="font-mono">recon.txt</span> (same name as{" "}
+              <span className="font-mono">apps/worker/prompts/recon.txt</span>
+              ). The worker runs Playwright Chromium (bounded same-origin crawl) plus
+              read-only HTTP fetches (target page,{" "}
               <span className="font-mono">robots.txt</span>,{" "}
-              <span className="font-mono">sitemap.xml</span>) merged with your pre-recon report into
-              an attack-surface map. No browser automation yet — aligned with Shannon’s recon
-              intent, lighter than Shannon Lite’s full stack.
+              <span className="font-mono">sitemap.xml</span>) and merges both with your pre-recon report.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -280,6 +324,103 @@ export function ScanStatus({ scan: initialScan }: { scan: Scan }) {
           <CardContent>
             <pre className="whitespace-pre-wrap text-sm font-mono bg-muted rounded-lg p-4 overflow-auto max-h-[60vh]">
               {scan.reconDeliverable}
+            </pre>
+          </CardContent>
+        </Card>
+      )}
+
+      {scan.status === "completed" && scan.deliverable && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Phase 3 — Vulnerability analysis (hypotheses)</CardTitle>
+            <CardDescription>
+              Five Shannon-named pipeline prompts (
+              <span className="font-mono">vuln-injection.txt</span>,{" "}
+              <span className="font-mono">vuln-xss.txt</span>,{" "}
+              <span className="font-mono">vuln-auth.txt</span>,{" "}
+              <span className="font-mono">vuln-authz.txt</span>,{" "}
+              <span className="font-mono">vuln-ssrf.txt</span>
+              ) plus synthesis—hypotheses only, no exploitation. Uses pre-recon, recon when
+              present, and a fresh repo snapshot. Phase 2 first is recommended but not required.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <span
+                className={`text-sm font-medium capitalize ${
+                  scan.vulnStatus === "completed"
+                    ? "text-green-600"
+                    : scan.vulnStatus === "failed"
+                      ? "text-destructive"
+                      : scan.vulnStatus === "running"
+                        ? "text-blue-600"
+                        : "text-muted-foreground"
+                }`}
+              >
+                {scan.vulnStatus ?? "not started"}
+              </span>
+              {scan.vulnTriggerRunId && (
+                <span className="text-xs font-mono text-muted-foreground truncate max-w-[200px]">
+                  run {scan.vulnTriggerRunId}
+                </span>
+              )}
+            </div>
+
+            {scan.vulnStatus === "running" && (
+              <div className="space-y-1">
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>{VULN_PHASE_LABELS[vulnPhase] ?? vulnPhase ?? "Starting…"}</span>
+                  <span>{vulnProgress}%</span>
+                </div>
+                <div className="h-2 rounded-full bg-muted overflow-hidden">
+                  <div
+                    className="h-full bg-primary transition-all duration-500 rounded-full"
+                    style={{ width: `${vulnProgress}%` }}
+                  />
+                </div>
+                {vulnAgentStatus && (
+                  <p className="text-xs text-muted-foreground">{vulnAgentStatus}</p>
+                )}
+              </div>
+            )}
+
+            {!scan.vulnStatus && (
+              <Button type="button" onClick={startVuln} disabled={vulnStarting}>
+                {vulnStarting ? "Starting…" : "Run vulnerability analysis (phase 3)"}
+              </Button>
+            )}
+
+            {scan.vulnStatus === "failed" && (
+              <div className="space-y-2">
+                <p className="text-sm text-destructive">
+                  Vulnerability analysis failed. Check worker logs and API reachability.
+                </p>
+                <Button type="button" variant="outline" onClick={startVuln} disabled={vulnStarting}>
+                  {vulnStarting ? "Retrying…" : "Retry vulnerability analysis"}
+                </Button>
+              </div>
+            )}
+
+            {scan.vulnStatus === "completed" && (
+              <Button type="button" variant="outline" onClick={startVuln} disabled={vulnStarting}>
+                {vulnStarting ? "Starting…" : "Re-run vulnerability analysis"}
+              </Button>
+            )}
+
+            {vulnStartError && <p className="text-sm text-destructive">{vulnStartError}</p>}
+          </CardContent>
+        </Card>
+      )}
+
+      {scan.vulnDeliverable && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Vulnerability hypotheses deliverable</CardTitle>
+            <CardDescription>Phase 3 merged output (not exploited findings).</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <pre className="whitespace-pre-wrap text-sm font-mono bg-muted rounded-lg p-4 overflow-auto max-h-[60vh]">
+              {scan.vulnDeliverable}
             </pre>
           </CardContent>
         </Card>

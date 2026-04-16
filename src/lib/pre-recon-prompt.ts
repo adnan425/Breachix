@@ -1,7 +1,7 @@
 import fsp from "node:fs/promises";
 import path from "node:path";
 
-/** Breachix pre-recon specialist labels (order matches extractPreReconSubagentInstructions). */
+/** Pre-recon specialist labels (order matches extractPreReconSubagentInstructions). */
 export const PRE_RECON_SUBAGENT_NAMES = [
   "Architecture Scanner Agent",
   "Entry Point Mapper Agent",
@@ -17,7 +17,7 @@ export function resolvePreReconPromptPath(cwd = process.cwd()): string {
   return path.join(cwd, "src", "prompts", PROMPT_FILENAME);
 }
 
-/** Load the Breachix pre-recon policy file and substitute \`{{REPO_PATH}}\` / \`{{DESCRIPTION}}\` only. */
+/** Load \`pre-recon-code.txt\` and substitute \`{{REPO_PATH}}\` / \`{{DESCRIPTION}}\` only. */
 export async function loadPreReconPromptTemplate(
   repoPath: string,
   description: string,
@@ -38,7 +38,7 @@ export async function loadPreReconPromptTemplate(
 }
 
 /**
- * Parses the six quoted specialist instructions from the phased-analysis block in the Breachix policy template.
+ * Parses the six quoted specialist instructions from the phased-analysis block in the policy template.
  * If the policy file format changes, update this regex or \`src/prompts/pre-recon-code.txt\`.
  */
 export function extractPreReconSubagentInstructions(template: string): string[] {

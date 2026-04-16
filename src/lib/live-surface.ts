@@ -1,9 +1,9 @@
 /**
- * Read-only HTTP discovery against a target origin (Shannon-style recon inputs, no browser).
+ * Read-only HTTP discovery against a target origin — complements Playwright in `recon-lite-agent`
+ * (raw HTML / redirects vs JS-rendered DOM). Used together for Shannon-style surface comparison.
  */
 
-const DEFAULT_UA =
-  "BreachixRecon/1.0 (+https://github.com/KeygraphHQ/shannon-inspired; read-only surface check)";
+const DEFAULT_UA = "ShannonStyleRecon/1.0 (read-only surface check; KeygraphHQ/shannon-style pipeline)";
 
 function originOf(input: string): string | null {
   try {

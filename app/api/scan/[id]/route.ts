@@ -17,6 +17,10 @@ export async function GET(
   let reconProgress = 0;
   let reconAgentStatus = "";
 
+  let vulnPhase = "";
+  let vulnProgress = 0;
+  let vulnAgentStatus = "";
+
   if (scan.triggerRunId && scan.status === "running") {
     try {
       const run = await runs.retrieve(scan.triggerRunId);
@@ -51,6 +55,23 @@ export async function GET(
     reconPhase = "Complete";
   }
 
+  if (scan.vulnTriggerRunId && scan.vulnStatus === "running") {
+    try {
+      const run = await runs.retrieve(scan.vulnTriggerRunId);
+      const meta = run.metadata as Record<string, unknown> | undefined;
+      vulnPhase = (meta?.["phase"] as string) ?? "";
+      vulnProgress = (meta?.["progress"] as number) ?? 0;
+      vulnAgentStatus = (meta?.["agentStatus"] as string) ?? "";
+    } catch {
+      // run not yet visible
+    }
+  }
+
+  if (scan.vulnStatus === "completed") {
+    vulnProgress = 100;
+    vulnPhase = "Complete";
+  }
+
   return Response.json({
     scan,
     phase,
@@ -59,5 +80,8 @@ export async function GET(
     reconPhase,
     reconProgress,
     reconAgentStatus,
+    vulnPhase,
+    vulnProgress,
+    vulnAgentStatus,
   });
 }

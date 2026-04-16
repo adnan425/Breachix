@@ -23,6 +23,7 @@ interface ScanRow {
   repoPath: string;
   status: string;
   reconStatus?: string | null;
+  vulnStatus?: string | null;
   createdAt: string | Date;
 }
 
@@ -75,7 +76,8 @@ export function HomeTabs({ initialSettings, initialScans }: HomeTabsProps) {
     (s) =>
       s.status === "running" ||
       s.status === "pending" ||
-      s.reconStatus === "running",
+      s.reconStatus === "running" ||
+      s.vulnStatus === "running",
   );
 
   const refreshScans = useCallback(async () => {
