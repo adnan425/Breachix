@@ -1,0 +1,25 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile        # root Dockerfile for Next.js
+    ports:
+      - "3000:3000"
+    env_file: .env
+    volumes:
+      - ./dev.db:/app/dev.db
+      - ./repos:/app/repos
+    command: pnpm dev
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile   # ← your worker
+    env_file: .env
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    volumes:
+      - ./repos:/repos
+      - /tmp:/tmp
+    restart: unless-stopped

@@ -1,0 +1,90 @@
+---
+alwaysApply: true
+---
+# Shannon Clone — Cursor Agent Rules
+
+## Project
+AI-powered security scanner. Next.js 15 + Trigger.dev v3 + Vercel AI SDK v6 + SQLite.
+No auth for now. All agents are in /trigger/.
+
+## Stack rules
+- Use `streamText` from `ai` with `maxSteps: 10000` for ALL agent loops
+- Use `anthropic('claude-sonnet-4-6')` as the model
+- All background tasks use `@trigger.dev/sdk` task()
+- DB uses Prisma with SQLite (file:./dev.db) — no Postgres
+- No auth middleware — skip it entirely for now
+- Tools are defined with `tool()` from `ai` and typed with `zod`
+
+## File structure
+- /trigger/          → all 13 agent task files
+- /trigger/agents/base-agent.ts  → shared runAgent() helper
+- /trigger/tools/index.ts        → all Claude tools
+- /lib/prompt-manager.ts         → loads prompts from Shannon repo
+- /prisma/schema.prisma          → SQLite schema
+
+## Agent pattern (always use this)
+```typescript
+import { streamText, tool } from 'ai';
+import { anthropic } from '@ai-sdk/anthropic';
+
+const result = await streamText({
+  model: anthropic('claude-sonnet-4-6'),
+  system: systemPrompt,
+  prompt: userPrompt,
+  tools: { readFile, searchRepo, httpRequest },
+  maxSteps: 10000,
+  onStepFinish: (step) => logger.info('step', step),
+});
+```
+
+## Prompt loading
+Prompts come from Shannon's repo. Load like this:
+```typescript
+const BASE = 'https://raw.githubusercontent.com/KeygraphHQ/shannon/main/prompts';
+const text = await fetch(`${BASE}/vuln-xss.txt`).then(r => r.text());
+```
+Variables use {{TARGET_URL}}, {{CONFIG_CONTEXT}} syntax.
+
+## DB schema (key models)
+- Scan: id, targetUrl, repoPath, status, findings(Json), report(Json)
+- Finding: id, scanId, type, severity, title, endpoint, payload, evidence
+
+## Tool definitions
+All tools use `tool({ description, parameters: z.object({...}), execute })` pattern.
+Tools available: readFile, searchRepo, httpRequest, runBrowser, reportFinding, analyzeAST
+
+## Build order
+1. prisma/schema.prisma
+2. Run `npx prisma migrate dev --name init`
+3. Run `npx prisma generate`
+4. lib/prompt-manager.ts
+5. trigger/agents/base-agent.ts
+6. trigger/tools/index.ts
+7. trigger/agents/agent-0-pre-recon.ts
+8. trigger/agents/agent-1-recon.ts
+9. trigger/agents/agent-2-vuln.ts
+10. trigger/agents/agent-3-exploit.ts
+11. trigger/agents/agent-4-report.ts
+12. trigger/scan.ts (orchestrator)
+
+## UI
+13. app/api/scan/start/route.ts
+14. app/api/scan/[id]/route.ts
+15. app/(dashboard)/scans/page.tsx
+16. app/(dashboard)/scans/[id]/page.tsx
+
+
+## Offensive tools (Docker worker only)
+All CLI tools run via execCommandTool from /trigger/tools/exec-command.ts.
+NEVER run execSync directly in a task — always go through execCommandTool.
+Allowed tools: nmap, httpx, ffuf, nuclei, sqlmap, gobuster, curl, jwt_tool.
+Tools run inside Docker with NET_RAW + NET_ADMIN capabilities.
+All tool output is capped at 10000 chars and logged via logger.info.
+
+## Tool → agent mapping
+- nmap, httpx, ffuf, gobuster → phase-1-recon.ts only
+- nuclei → phase-2-vuln.ts (all 5 agents)
+- sqlmap → phase-3-exploit.ts (injection agent only)
+- playwright → phase-3-exploit.ts (xss, auth, idor agents)
+- jwt_tool → phase-3-exploit.ts (auth agent only)
+- curl → phase-3-exploit.ts (ssrf agent only)
