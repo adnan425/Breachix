@@ -1,28 +1,5 @@
 import { prisma } from "./prisma";
 
-const DEFAULT_OLLAMA_URL = process.env.OLLAMA_URL ?? "http://localhost:11434";
-const DEFAULT_OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "qwen2.5:7b";
-
-// ---------------------------------------------------------------------------
-// Settings
-// ---------------------------------------------------------------------------
-
-export async function getSettings() {
-  return prisma.settings.upsert({
-    where: { id: 1 },
-    update: {},
-    create: { id: 1, ollamaUrl: DEFAULT_OLLAMA_URL, model: DEFAULT_OLLAMA_MODEL },
-  });
-}
-
-export async function saveSettings(ollamaUrl: string, model: string) {
-  return prisma.settings.upsert({
-    where: { id: 1 },
-    update: { ollamaUrl, model },
-    create: { id: 1, ollamaUrl, model },
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Scans
 // ---------------------------------------------------------------------------
@@ -33,6 +10,10 @@ export async function getScan(id: string) {
 
 export async function getScans() {
   return prisma.scan.findMany({ orderBy: { createdAt: "desc" } });
+}
+
+export async function deleteAllScans() {
+  return prisma.scan.deleteMany();
 }
 
 export async function createScan(data: {
@@ -48,6 +29,17 @@ export async function createScan(data: {
 
 export async function updateScanRunId(id: string, triggerRunId: string) {
   return prisma.scan.update({ where: { id }, data: { triggerRunId } });
+}
+
+export async function restartPreReconScan(id: string, triggerRunId: string) {
+  return prisma.scan.update({
+    where: { id },
+    data: {
+      status: "pending",
+      triggerRunId,
+      deliverable: null,
+    },
+  });
 }
 
 export async function updateScanStatus(

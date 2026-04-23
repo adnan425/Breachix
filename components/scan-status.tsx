@@ -68,6 +68,8 @@ export function ScanStatus({ scan: initialScan }: { scan: Scan }) {
   const [phase, setPhase] = useState<string>("");
   const [progress, setProgress] = useState(0);
   const [agentStatus, setAgentStatus] = useState<string>("");
+  const [preReconStarting, setPreReconStarting] = useState(false);
+  const [preReconStartError, setPreReconStartError] = useState<string | null>(null);
   const [reconPhase, setReconPhase] = useState<string>("");
   const [reconProgress, setReconProgress] = useState(0);
   const [reconAgentStatus, setReconAgentStatus] = useState<string>("");
@@ -80,6 +82,7 @@ export function ScanStatus({ scan: initialScan }: { scan: Scan }) {
   const [vulnStartError, setVulnStartError] = useState<string | null>(null);
 
   const preReconDone = scan.status === "completed" || scan.status === "failed";
+  const preReconActive = scan.status === "running" || (scan.status === "pending" && !!scan.triggerRunId);
   const reconPolling = scan.reconStatus === "running";
   const vulnPolling = scan.vulnStatus === "running";
   const shouldPoll = !preReconDone || reconPolling || vulnPolling;
@@ -108,6 +111,28 @@ export function ScanStatus({ scan: initialScan }: { scan: Scan }) {
     }, 3000);
     return () => clearInterval(interval);
   }, [scan.id, shouldPoll]);
+
+  async function startPreRecon() {
+    setPreReconStarting(true);
+    setPreReconStartError(null);
+    try {
+      const res = await fetch(`/api/scan/${scan.id}/start`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+      const refreshed = await fetch(`/api/scan/${scan.id}`);
+      if (refreshed.ok) {
+        const full = await refreshed.json();
+        setScan(full.scan);
+        setPhase(full.phase ?? "");
+        setProgress(full.progress ?? 0);
+        setAgentStatus(full.agentStatus ?? "");
+      }
+    } catch (e) {
+      setPreReconStartError(e instanceof Error ? e.message : "Failed to start pre-recon");
+    } finally {
+      setPreReconStarting(false);
+    }
+  }
 
   async function startRecon() {
     setReconStarting(true);
@@ -187,7 +212,7 @@ export function ScanStatus({ scan: initialScan }: { scan: Scan }) {
         </CardHeader>
         <CardContent className="space-y-4">
           {/* Progress bar */}
-          {scan.status === "running" && (
+          {preReconActive && (
             <div className="space-y-1">
               <div className="flex justify-between text-xs text-muted-foreground">
                 <span>{PHASE_LABELS[phase] ?? phase ?? "Starting…"}</span>
@@ -199,6 +224,31 @@ export function ScanStatus({ scan: initialScan }: { scan: Scan }) {
                   style={{ width: `${progress}%` }}
                 />
               </div>
+              {agentStatus && <p className="text-xs text-muted-foreground">{agentStatus}</p>}
+            </div>
+          )}
+
+          {scan.status === "pending" && (
+            <div className="space-y-3 rounded-md border border-border/70 bg-muted/40 p-3">
+              <p className="text-sm text-muted-foreground">
+                Pre-recon is pending and waiting to execute.
+              </p>
+              {!scan.triggerRunId && (
+                <div className="space-y-2">
+                  <p className="text-sm text-destructive">
+                    This scan has no run ID yet. You can trigger it again.
+                  </p>
+                  <Button type="button" size="sm" onClick={startPreRecon} disabled={preReconStarting}>
+                    {preReconStarting ? "Starting…" : "Start pre-recon now"}
+                  </Button>
+                </div>
+              )}
+              {scan.triggerRunId && (
+                <p className="text-xs text-muted-foreground">
+                  run {scan.triggerRunId}
+                </p>
+              )}
+              {preReconStartError && <p className="text-sm text-destructive">{preReconStartError}</p>}
             </div>
           )}
 
@@ -432,12 +482,21 @@ export function ScanStatus({ scan: initialScan }: { scan: Scan }) {
           <CardHeader>
             <CardTitle className="text-destructive">Scan Failed</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
               The agent encountered an error. Check that the configured API base
               URL is reachable from the worker, the model id is valid, then try
               again.
             </p>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={startPreRecon}
+              disabled={preReconStarting}
+            >
+              {preReconStarting ? "Retrying…" : "Retry pre-recon"}
+            </Button>
+            {preReconStartError && <p className="text-sm text-destructive">{preReconStartError}</p>}
           </CardContent>
         </Card>
       )}

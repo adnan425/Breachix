@@ -4,7 +4,7 @@ import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 import { getScan, updateReconStatus } from "../lib/queries";
 import { substituteReconPlaceholders } from "../lib/expand-prompt-includes";
-import { completeChat, createOllamaClient } from "../lib/ai-client";
+import { completeChat, createRuntimeClient } from "../lib/ai-client";
 import { gatherLiveBrowserRecon } from "../lib/recon-browser";
 import { collectLiveSurfaceSignals } from "../lib/live-surface";
 import { RECON_RUNNER_NOTE } from "../lib/shannon-worker-bridge";
@@ -35,8 +35,9 @@ async function loadReconSystemPromptForScan(
 
 export interface ReconLitePayload {
   scanId: string;
-  ollamaUrl: string;
+  baseUrl: string;
   model: string;
+  apiKey?: string;
 }
 
 export const reconLiteAgent = task({
@@ -46,7 +47,7 @@ export const reconLiteAgent = task({
   retry: { maxAttempts: 1 },
 
   run: async (payload: ReconLitePayload) => {
-    const { scanId, ollamaUrl, model } = payload;
+    const { scanId, baseUrl, model, apiKey } = payload;
 
     const setProgress = (phase: string, pct: number, agentStatus: string) => {
       metadata.set("phase", phase);
@@ -103,7 +104,7 @@ ${browserBundle}
 
 ${fetchBundle}`;
 
-      const client = createOllamaClient(ollamaUrl);
+      const client = createRuntimeClient(baseUrl, apiKey);
       const deliverable = await completeChat(client, model, {
         system,
         user,

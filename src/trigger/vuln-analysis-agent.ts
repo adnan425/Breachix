@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { getScan, updateVulnStatus } from "../lib/queries";
 import { loadExpandedVulnPipelinePrompt } from "../lib/expand-prompt-includes";
-import { completeChat, createOllamaClient } from "../lib/ai-client";
+import { chat, createRuntimeClient } from "../lib/ai-client";
 import { buildCodeContext } from "../lib/repo-snapshot";
 import { EVIDENCE_GROUNDING_USER_BLOCK, VULN_SYSTEM_TOOL_BRIDGE } from "../lib/shannon-worker-bridge";
 import { runSaveDeliverable } from "../lib/save-deliverable-shannon";
@@ -41,8 +41,9 @@ Do not add exploitation steps or payloads.`;
 
 export interface VulnAnalysisPayload {
   scanId: string;
-  ollamaUrl: string;
+  baseUrl: string;
   model: string;
+  apiKey?: string;
 }
 
 export const vulnAnalysisAgent = task({
@@ -51,7 +52,7 @@ export const vulnAnalysisAgent = task({
   retry: { maxAttempts: 1 },
 
   run: async (payload: VulnAnalysisPayload) => {
-    const { scanId, ollamaUrl, model } = payload;
+    const { scanId, baseUrl, model, apiKey } = payload;
 
     const setProgress = (phase: string, pct: number, agentStatus: string) => {
       metadata.set("phase", phase);
@@ -74,7 +75,7 @@ export const vulnAnalysisAgent = task({
         throw new Error(`repoPath is not readable on this worker: ${scan.repoPath}`);
       }
 
-      const client = createOllamaClient(ollamaUrl);
+      const client = createRuntimeClient(baseUrl, apiKey);
       const ctx = { webUrl: scan.targetUrl, repoPath: scan.repoPath };
 
       const preCap = 55_000;
@@ -117,7 +118,7 @@ ${snapshot}
         VULN_PIPELINES.map(async ({ file }) => {
           const shannonBody = await loadExpandedVulnPipelinePrompt(file, ctx);
           const system = `${VULN_SYSTEM_TOOL_BRIDGE}${shannonBody}`;
-          return completeChat(client, model, {
+          return chat(client, model, {
             system,
             user: `${baseUser}Execute only your specialist role from the system policy (after the worker-environment block). Output Markdown. If the evidence sections lack content for your category, output only the one-sentence "No hypotheses…" line from **Evidence grounding** above.`,
             maxUserChars: 200_000,
@@ -163,7 +164,7 @@ Below are the five parallel specialist outputs. Merge per your system instructio
 
 ${combined}`;
 
-      const deliverable = await completeChat(client, model, {
+      const deliverable = await chat(client, model, {
         system: SYNTHESIS_SYSTEM,
         user: synthesisUser,
         maxUserChars: 200_000,

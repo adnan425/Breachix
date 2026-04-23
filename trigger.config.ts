@@ -30,7 +30,7 @@ export default defineConfig({
       additionalFiles({ files: ["./src/prompts/**"] }),
 
       // Playwright Chromium for exploit agents
-      playwright({ browsers: ["chromium"], headless: true }),
+      playwright({ browsers: ["chromium"], headless: false }),
 
       // Prisma client — REQUIRED for DB access inside tasks
       prismaExtension({

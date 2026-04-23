@@ -21,13 +21,22 @@ export async function GET(
   let vulnProgress = 0;
   let vulnAgentStatus = "";
 
-  if (scan.triggerRunId && scan.status === "running") {
+  if (scan.triggerRunId && (scan.status === "running" || scan.status === "pending")) {
     try {
       const run = await runs.retrieve(scan.triggerRunId);
       const meta = run.metadata as Record<string, unknown> | undefined;
       phase = (meta?.["phase"] as string) ?? "";
       progress = (meta?.["progress"] as number) ?? 0;
       agentStatus = (meta?.["agentStatus"] as string) ?? "";
+      if (!phase && run.status === "QUEUED") {
+        phase = "Queued";
+      }
+      if (!agentStatus && run.status === "QUEUED") {
+        agentStatus = "Queued on worker…";
+      }
+      if (!phase && run.status === "EXECUTING") {
+        phase = "Starting";
+      }
     } catch {
       // run not yet visible
     }

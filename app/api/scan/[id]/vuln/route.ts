@@ -1,4 +1,5 @@
-import { getScan, getSettings, updateVulnRunId } from "@/lib/queries";
+import { getScan, updateVulnRunId } from "@/lib/queries";
+import { getRuntimeAIConfig } from "@/lib/runtime-ai";
 import { tasks } from "@trigger.dev/sdk/v3";
 import type { vulnAnalysisAgent } from "@/src/trigger/vuln-analysis-agent";
 
@@ -6,6 +7,7 @@ export async function POST(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const runtimeAI = getRuntimeAIConfig();
   const { id } = await params;
   const scan = await getScan(id);
   if (!scan) return Response.json({ error: "Not found" }, { status: 404 });
@@ -24,14 +26,13 @@ export async function POST(
     );
   }
 
-  const settings = await getSettings();
-
   let handle: { id: string };
   try {
     handle = await tasks.trigger<typeof vulnAnalysisAgent>("vuln-analysis-agent", {
       scanId: scan.id,
-      ollamaUrl: settings.ollamaUrl,
-      model: settings.model,
+      baseUrl: runtimeAI.baseUrl,
+      model: runtimeAI.model,
+      apiKey: runtimeAI.apiKey,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Trigger failed";

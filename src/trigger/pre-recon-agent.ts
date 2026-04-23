@@ -1,29 +1,36 @@
 import { logger, metadata, task } from "@trigger.dev/sdk/v3";
 import fs from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import { updateScanStatus } from "../lib/queries";
-import { buildCodeContext, buildGitMetadataSection } from "../lib/repo-snapshot";
+import { buildGitMetadataSection } from "../lib/repo-snapshot";
 import { collectExternalScanBlock } from "../lib/pre-recon-parity";
 import { runSaveDeliverable } from "../lib/save-deliverable-shannon";
-import { completeChat, createOllamaClient } from "../lib/ai-client";
-import {
-  extractPreReconSubagentInstructions,
-  loadPreReconPromptTemplate,
-  PRE_RECON_SUBAGENT_NAMES,
-} from "../lib/pre-recon-prompt";
-import { PRE_RECON_RUNNER_NOTE } from "../lib/shannon-worker-bridge";
+import { loadPreReconPromptTemplate } from "../lib/pre-recon-prompt";
+
+const PRE_RECON_MODEL =
+  process.env.PRE_RECON_MODEL ??
+  process.env.ANTHROPIC_MEDIUM_MODEL ??
+  process.env.MODEL ??
+  "claude-sonnet-4-6";
+
+type SDKMessageLike = {
+  type?: string;
+  [key: string]: unknown;
+};
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export interface PreReconPayload {
-  scanId: string;
-  targetUrl: string;
-  repoPath: string;
+  scanId:      string;
+  targetUrl:   string;
+  repoPath:    string;
   environment: string;
-  ollamaUrl: string;
-  model: string;
+  baseUrl?:    string;
+  apiKey?:     string;
+  model?:      string;
 }
 
 // ---------------------------------------------------------------------------
@@ -32,14 +39,14 @@ export interface PreReconPayload {
 
 export const preReconAgent = task({
   id: "pre-recon-agent",
-  /** More headroom for parallel nmap / httpx / whois on the worker (same pre-recon phase). */
   machine: { preset: "medium-1x" },
   maxDuration: 3600,
   retry: { maxAttempts: 1 },
 
   run: async (payload: PreReconPayload) => {
-    const { scanId, targetUrl, repoPath, ollamaUrl, model, environment } = payload;
+    const { scanId, targetUrl, repoPath, environment, baseUrl, apiKey, model } = payload;
 
+    // ── Progress helper ────────────────────────────────────────────────────
     const setProgress = (phase: string, pct: number, agentStatus: string) => {
       metadata.set("phase", phase);
       metadata.set("progress", pct);
@@ -50,6 +57,7 @@ export const preReconAgent = task({
     try {
       await updateScanStatus(scanId, "running");
 
+      // ── Validate repo path ───────────────────────────────────────────────
       let repoStat;
       try {
         repoStat = await fs.stat(repoPath);
@@ -63,20 +71,20 @@ export const preReconAgent = task({
         throw new Error(`repoPath is not readable: ${repoPath}`);
       });
 
-      const client = createOllamaClient(ollamaUrl);
-
+      // ── Build description for prompt ─────────────────────────────────────
       const description = [
         `Target application URL: ${targetUrl}`,
         `Declared environment: ${environment}`,
         `Repository path on worker host: ${repoPath}`,
       ].join("\n");
 
+      // ── Load Shannon pre-recon prompt template ───────────────────────────
       const systemSpec = await loadPreReconPromptTemplate(repoPath, description);
-      const subInstructions = extractPreReconSubagentInstructions(systemSpec);
 
-      setProgress("Shannon-style inputs", 5, "Parallel CLIs + git + snapshot…");
-      const [codeContext, gitMeta, externalBlock] = await Promise.all([
-        buildCodeContext(repoPath, targetUrl),
+      // ── Collect worker-side supplemental evidence ─────────────────────────
+      setProgress("Shannon-style inputs", 5, "Parallel CLIs + git metadata…");
+
+      const [gitMeta, externalBlock] = await Promise.all([
         buildGitMetadataSection(repoPath),
         collectExternalScanBlock(targetUrl, {
           onStatus: (m) => {
@@ -85,88 +93,106 @@ export const preReconAgent = task({
           },
         }),
       ]);
-      const evidenceBundle = `${externalBlock}\n\n${gitMeta}\n\n${codeContext}`;
-      logger.info(`[pre-recon] evidence bundle: ${evidenceBundle.length} chars`);
 
-      // Phase 1 — three discovery specialists in parallel
-      setProgress("Phase 1 – Discovery", 12, `${PRE_RECON_SUBAGENT_NAMES[0]} · ${PRE_RECON_SUBAGENT_NAMES[1]} · ${PRE_RECON_SUBAGENT_NAMES[2]}`);
+      const fullPrompt = `${systemSpec}
 
-      const phase1User = (instruction: string, name: string) =>
-        `${PRE_RECON_RUNNER_NOTE}Subtask only — act as **${name}** in isolation (Phase 1 per the system policy).
+## Supplemental worker evidence (external recon + git)
 
-Output markdown headed with the agent name. Do not produce the full merged sections 1–10 report in this response.
+${externalBlock}
 
-Instruction (verbatim from the phased-analysis block in the system policy):
-"${instruction}"
+${gitMeta}
 
-## Evidence bundle (external + git + snapshot)
+## Runtime note
 
-${evidenceBundle}`;
+Return the complete final markdown report in your last assistant response. The runner will persist it to \`.breachix/deliverables/pre_recon_deliverable.md\`.
+`;
 
-      const [architecture, entrypoints, securityPatterns] = await Promise.all([
-        completeChat(client, model, { system: systemSpec, user: phase1User(subInstructions[0], PRE_RECON_SUBAGENT_NAMES[0]) }),
-        completeChat(client, model, { system: systemSpec, user: phase1User(subInstructions[1], PRE_RECON_SUBAGENT_NAMES[1]) }),
-        completeChat(client, model, { system: systemSpec, user: phase1User(subInstructions[2], PRE_RECON_SUBAGENT_NAMES[2]) }),
-      ]);
+      const effectiveModel = model || PRE_RECON_MODEL;
+      if (!effectiveModel) {
+        throw new Error(
+          "Missing model for pre-recon. Set PRE_RECON_MODEL or MODEL in environment.",
+        );
+      }
 
-      setProgress("Phase 1 complete", 44, "Discovery agents done.");
+      let deliverable = "";
+      let turns = 0;
+      setProgress("Shannon pre-recon run", 12, "Claude Agent SDK running with tool access…");
 
-      // Phase 2 — three vulnerability specialists in parallel
-      setProgress("Phase 2 – Vulnerability Analysis", 48, `${PRE_RECON_SUBAGENT_NAMES[3]} · ${PRE_RECON_SUBAGENT_NAMES[4]} · ${PRE_RECON_SUBAGENT_NAMES[5]}`);
+      const sdkEnv: Record<string, string> = {
+        CLAUDE_CODE_MAX_OUTPUT_TOKENS: process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS || "64000",
+      };
+      if (baseUrl) {
+        sdkEnv.ANTHROPIC_BASE_URL = baseUrl;
+      }
+      if (apiKey) {
+        sdkEnv.ANTHROPIC_AUTH_TOKEN = apiKey;
+      }
+      const passEnv = [
+        "ANTHROPIC_API_KEY", 
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "HOME",
+        "PATH",
+      ];
+      for (const key of passEnv) {
+        const value = process.env[key];
+        if (value) sdkEnv[key] = value;
+      }
 
-      const phase2User = (instruction: string, name: string) =>
-        `${PRE_RECON_RUNNER_NOTE}Subtask only — act as **${name}** in isolation (Phase 2 per the system policy).
+      for await (const message of query({
+        prompt: fullPrompt,
+        options: {
+          model: effectiveModel,
+          maxTurns: 10_000,
+          cwd: repoPath,
+          permissionMode: "bypassPermissions",
+          allowDangerouslySkipPermissions: true,
+          settingSources: ["user"],
+          env: sdkEnv,
+        },
+      })) {
+        const m = message as SDKMessageLike;
 
-Output markdown headed with the agent name. Do not produce the full merged sections 1–10 report in this response.
+        if (m.type === "assistant") {
+          turns += 1;
+          if (turns % 5 === 0) {
+            metadata.set("agentStatus", `Analyzing repository… (turn ${turns})`);
+          }
+        }
 
-Instruction (verbatim from the phased-analysis block in the system policy):
-"${instruction}"
+        if (m.type === "result") {
+          if (typeof m.result === "string") {
+            deliverable = m.result;
+          } else if (typeof m.output === "string") {
+            deliverable = m.output;
+          } else if (typeof m.final_output === "string") {
+            deliverable = m.final_output;
+          }
+          if (!deliverable.trim()) {
+            throw new Error("Pre-recon agent completed without markdown deliverable text.");
+          }
+          break;
+        }
+      }
 
-## Evidence bundle (external + git + snapshot)
+      if (!deliverable.trim()) {
+        throw new Error("Pre-recon agent completed without markdown deliverable text.");
+      }
 
-${evidenceBundle}`;
-
-      const [injectionSinks, ssrf, dataSecurity] = await Promise.all([
-        completeChat(client, model, { system: systemSpec, user: phase2User(subInstructions[3], PRE_RECON_SUBAGENT_NAMES[3]) }),
-        completeChat(client, model, { system: systemSpec, user: phase2User(subInstructions[4], PRE_RECON_SUBAGENT_NAMES[4]) }),
-        completeChat(client, model, { system: systemSpec, user: phase2User(subInstructions[5], PRE_RECON_SUBAGENT_NAMES[5]) }),
-      ]);
-
-      setProgress("Phase 2 complete", 80, "Vulnerability analysis agents done.");
-
-      // Phase 3 — synthesis (single report, exact headings in pre-recon-code.txt)
-      setProgress("Phase 3 – Synthesis", 88, "Merging into final pre-recon report…");
-
-      const combined = [
-        `## ${PRE_RECON_SUBAGENT_NAMES[0]}\n${architecture}`,
-        `## ${PRE_RECON_SUBAGENT_NAMES[1]}\n${entrypoints}`,
-        `## ${PRE_RECON_SUBAGENT_NAMES[2]}\n${securityPatterns}`,
-        `## ${PRE_RECON_SUBAGENT_NAMES[3]}\n${injectionSinks}`,
-        `## ${PRE_RECON_SUBAGENT_NAMES[4]}\n${ssrf}`,
-        `## ${PRE_RECON_SUBAGENT_NAMES[5]}\n${dataSecurity}`,
-      ].join("\n\n---\n\n");
-
-      const synthesisUser = `${PRE_RECON_RUNNER_NOTE}Phase 3 — Synthesis and report generation.
-
-Below are the six specialist markdown outputs from this run. Merge them into ONE document using the **exact** Markdown headings and section order required under "Please structure your report using the exact following Markdown headings" in the system policy (sections 1 through 10, including Penetration Test Scope & Boundaries).
-
-${combined}`;
-
-      const deliverable = await completeChat(client, model, {
-        system: systemSpec,
-        user: synthesisUser,
-        maxUserChars: 200_000,
-      });
-
+      // ── Save deliverable to disk ──────────────────────────────────────────
       const saveOut = await runSaveDeliverable(repoPath, "CODE_ANALYSIS", deliverable);
       if (saveOut.status !== "success") {
-        logger.warn(`[pre-recon] save-deliverable step: ${JSON.stringify(saveOut)}`);
+        logger.warn(`[pre-recon] save-deliverable: ${JSON.stringify(saveOut)}`);
       }
+
+      // ── Mark complete ─────────────────────────────────────────────────────
       await updateScanStatus(scanId, "completed", deliverable);
       setProgress("Complete", 100, "Pre-reconnaissance finished.");
-      logger.info(`[pre-recon] scan ${scanId} completed`);
+      logger.info(`[pre-recon] scan ${scanId} completed in ${turns} turns`);
 
       return { scanId, status: "completed", deliverable };
+
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await updateScanStatus(scanId, "failed").catch(() => null);

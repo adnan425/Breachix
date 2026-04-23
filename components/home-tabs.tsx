@@ -27,9 +27,9 @@ interface ScanRow {
   createdAt: string | Date;
 }
 
-interface HomeTabsProps {
-  initialSettings: { ollamaUrl: string; model: string };
+interface HomeTabsProps { 
   initialScans: ScanRow[];
+  runtimeModel: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -54,22 +54,17 @@ function timeAgo(date: string | Date) {
 // Component
 // ---------------------------------------------------------------------------
 
-export function HomeTabs({ initialSettings, initialScans }: HomeTabsProps) {
+export function HomeTabs({ initialScans, runtimeModel }: HomeTabsProps) {
   const router = useRouter();
 
   // Scan form
   const [scanLoading, setScanLoading] = useState(false);
   const [scanError, setScanError]     = useState<string | null>(null);
+  const [deleteAllLoading, setDeleteAllLoading] = useState(false);
+  const [scansError, setScansError] = useState<string | null>(null);
 
   // Scans list
   const [scans, setScans] = useState<ScanRow[]>(initialScans);
-
-  // Settings
-  const [ollamaUrl,      setOllamaUrl]      = useState(initialSettings.ollamaUrl);
-  const [model,          setModel]          = useState(initialSettings.model);
-  const [settingsSaving, setSettingsSaving] = useState(false);
-  const [settingsSaved,  setSettingsSaved]  = useState(false);
-  const [settingsError,  setSettingsError]  = useState<string | null>(null);
 
   // Poll scans list every 4 s when any run is active
   const hasActive = scans.some(
@@ -125,26 +120,21 @@ export function HomeTabs({ initialSettings, initialScans }: HomeTabsProps) {
     }
   }
 
-  async function handleSettingsSave(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setSettingsSaving(true);
-    setSettingsError(null);
-    setSettingsSaved(false);
+  async function handleDeleteAllScans() {
+    if (scans.length === 0 || deleteAllLoading) return;
+    setScansError(null);
+    const confirmed = window.confirm("Delete all scans? This action cannot be undone.");
+    if (!confirmed) return;
 
+    setDeleteAllLoading(true);
     try {
-      const res  = await fetch("/api/settings", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ ollamaUrl, model }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Failed to save settings");
-      setSettingsSaved(true);
-      setTimeout(() => setSettingsSaved(false), 3000);
-    } catch (err) {
-      setSettingsError(err instanceof Error ? err.message : "Unknown error");
+      const res = await fetch("/api/scans", { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to delete scans");
+      setScans([]);
+    } catch {
+      setScansError("Failed to delete all scans. Please try again.");
     } finally {
-      setSettingsSaving(false);
+      setDeleteAllLoading(false);
     }
   }
 
@@ -167,7 +157,6 @@ export function HomeTabs({ initialSettings, initialScans }: HomeTabsProps) {
         <TabsList className="mb-4">
           <TabsTrigger value="scans">Scans {scans.length > 0 && `(${scans.length})`}</TabsTrigger>
           <TabsTrigger value="scan">New Scan</TabsTrigger>
-          <TabsTrigger value="settings">AI Settings</TabsTrigger>
         </TabsList>
 
         {/* ---------------------------------------------------------------- */}
@@ -184,6 +173,18 @@ export function HomeTabs({ initialSettings, initialScans }: HomeTabsProps) {
             </Card>
           ) : (
             <div className="space-y-2">
+              {scansError && <p className="text-sm text-destructive">{scansError}</p>}
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleDeleteAllScans}
+                  disabled={deleteAllLoading}
+                >
+                  {deleteAllLoading ? "Deleting..." : "Delete all"}
+                </Button>
+              </div>
               {scans.map((scan) => (
                 <Link
                   key={scan.id}
@@ -228,9 +229,7 @@ export function HomeTabs({ initialSettings, initialScans }: HomeTabsProps) {
                 <CardTitle>Scan details</CardTitle>
                 <CardDescription>
                   Model{" "}
-                  <span className="font-mono text-foreground">{model}</span>
-                  {" · "}
-                  <span className="font-mono text-foreground">{ollamaUrl}</span>
+                  <span className="font-mono text-foreground">{runtimeModel}</span>
                 </CardDescription>
               </CardHeader>
               <CardContent className="grid gap-5 sm:grid-cols-2">
@@ -273,63 +272,8 @@ export function HomeTabs({ initialSettings, initialScans }: HomeTabsProps) {
         </TabsContent>
 
         {/* ---------------------------------------------------------------- */}
-        {/* Settings tab                                                     */}
+        {/* Runtime config tab                                               */}
         {/* ---------------------------------------------------------------- */}
-        <TabsContent value="settings">
-          <form onSubmit={handleSettingsSave} className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>AI Provider</CardTitle>
-                <CardDescription>
-                  Base URL and model for any OpenAI-compatible chat API (local or
-                  hosted). The worker must be able to reach this URL when a scan
-                  runs.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="grid gap-5 sm:grid-cols-2">
-                <div className="space-y-2 sm:col-span-2">
-                  <Label htmlFor="ollamaUrl">API base URL</Label>
-                  <Input
-                    id="ollamaUrl"
-                    value={ollamaUrl}
-                    onChange={(e) => setOllamaUrl(e.target.value)}
-                    placeholder="http://localhost:11434"
-                    required
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Root URL only (no <span className="font-mono">/v1</span> suffix).
-                    Breachix calls <span className="font-mono">{"{base}/v1/chat/completions"}</span>.
-                  </p>
-                </div>
-
-                <div className="space-y-2 sm:col-span-2">
-                  <Label htmlFor="model">Model</Label>
-                  <Input
-                    id="model"
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
-                    placeholder="llama3.1"
-                    required
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Model id your server expects (provider-specific).
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
-
-            {settingsError && <p className="text-sm text-destructive">{settingsError}</p>}
-
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={settingsSaving}
-              variant={settingsSaved ? "outline" : "default"}
-            >
-              {settingsSaving ? "Saving…" : settingsSaved ? "✓ Settings saved" : "Save Settings"}
-            </Button>
-          </form>
-        </TabsContent>
       </Tabs>
     </div>
   );

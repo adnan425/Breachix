@@ -15,13 +15,21 @@ Task id **`pre-recon-agent`** in `src/trigger/pre-recon-agent.ts`.
 ## Run it
 
 1. `npm install` → `npx prisma migrate dev` → `npx prisma generate`
-2. `.env` (names are legacy; values are just API root + model):
+2. `.env`:
 
 ```env
 DATABASE_URL="file:./dev.db"
-OLLAMA_URL="https://your-api-host"
-OLLAMA_MODEL="your-model-id"
+AI_BASE_URL="https://your-api-host"
+AI_MODEL="your-model-id"
+AI_API_KEY="your-api-key"
 TRIGGER_SECRET_KEY="from Trigger.dev dashboard"
+```
+
+Optional phase-1 router mode (Shannon-style custom base URL flow):
+
+```env
+PRE_RECON_USE_ROUTER=1
+PRE_RECON_MODEL="openai/gpt-oss-120b"
 ```
 
 3. Worker must reach that API. Two terminals: `npm run dev` and `npx trigger.dev@latest dev`.

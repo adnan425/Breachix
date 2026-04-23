@@ -1,9 +1,15 @@
-import { getSettings, createScan, updateScanRunId, updateScanStatus } from "@/lib/queries";
+import {
+  createScan,
+  updateScanRunId,
+  updateScanStatus,
+} from "@/lib/queries";
+import { getRuntimeAIConfig } from "@/lib/runtime-ai";
 import { tasks } from "@trigger.dev/sdk/v3";
 import type { preReconAgent } from "@/src/trigger/pre-recon-agent";
 
 export async function POST(request: Request) {
   try {
+    const runtimeAI = getRuntimeAIConfig();
     const { targetUrl, repoPath, environment, workspaceName } = await request.json() as {
       targetUrl: string;
       repoPath: string;
@@ -18,10 +24,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const [settings, scan] = await Promise.all([
-      getSettings(),
-      createScan({ targetUrl, repoPath, environment, workspaceName }),
-    ]);
+    const scan = await createScan({ targetUrl, repoPath, environment, workspaceName });
 
     let handle: { id: string };
     try {
@@ -30,8 +33,9 @@ export async function POST(request: Request) {
         targetUrl,
         repoPath,
         environment,
-        ollamaUrl: settings.ollamaUrl,
-        model: settings.model,
+        baseUrl: runtimeAI.baseUrl,
+        model: runtimeAI.model,
+        apiKey: runtimeAI.apiKey,
       });
     } catch (triggerErr) {
       await updateScanStatus(scan.id, "failed").catch(() => null);

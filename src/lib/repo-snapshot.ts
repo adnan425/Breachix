@@ -13,8 +13,25 @@ const SKIP_DIRS = new Set([
 
 const SCHEMA_EXTENSIONS = [".json", ".yaml", ".yml", ".graphql", ".gql"];
 const SCHEMA_PATTERNS = [/openapi/, /swagger/, /schema/, /graphql/, /\.schema\./];
+const SNAPSHOT_MAX_CHARS = Number(process.env.PRE_RECON_SNAPSHOT_MAX_CHARS ?? 600_000);
+const SNAPSHOT_MAX_FILE_CHARS = Number(process.env.PRE_RECON_SNAPSHOT_MAX_FILE_CHARS ?? 12_000);
+const SNAPSHOT_MAX_FILES = Number(process.env.PRE_RECON_SNAPSHOT_MAX_FILES ?? 1_200);
+const CODE_EXTENSIONS = new Set([
+  ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+  ".py", ".go", ".java", ".kt", ".rb", ".php",
+  ".rs", ".cs", ".swift", ".scala", ".sh", ".bash",
+  ".sql", ".prisma", ".graphql", ".gql",
+  ".md", ".txt", ".env", ".ini", ".toml", ".yml", ".yaml", ".json",
+]);
 
-async function walk(dir: string, depth = 0, maxDepth = 5): Promise<string[]> {
+function isLikelyTextFile(file: string): boolean {
+  const base = path.basename(file).toLowerCase();
+  if (base === "dockerfile" || base === ".gitignore" || base === ".env.example") return true;
+  if (base.endsWith(".min.js") || base.endsWith(".min.css")) return false;
+  return CODE_EXTENSIONS.has(path.extname(base));
+}
+
+async function walk(dir: string, depth = 0, maxDepth = 20): Promise<string[]> {
   if (depth > maxDepth) return [];
   const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
   const results: string[] = [];
@@ -96,29 +113,51 @@ export async function buildCodeContext(repoPath: string, targetUrl: string): Pro
   ];
 
   const keyFiles = allFiles.filter((f) => KEY_PATTERNS.some((p) => p.test(rel(f))));
+  const broadCodeFiles = allFiles
+    .filter((f) => isLikelyTextFile(f))
+    .sort((a, b) => {
+      const ar = rel(a);
+      const br = rel(b);
+      const score = (s: string) => {
+        let n = 0;
+        if (s.startsWith("src/")) n += 8;
+        if (s.startsWith("app/")) n += 8;
+        if (s.startsWith("components/")) n += 6;
+        if (/(api|route|server|auth|middleware|trigger|worker|prisma|schema)/i.test(s)) n += 4;
+        return n;
+      };
+      return score(br) - score(ar) || ar.localeCompare(br);
+    });
 
   const seenPaths = new Set<string>();
   const contentSources: string[] = [];
-  for (const f of [...schemaFiles, ...keyFiles]) {
+  for (const f of [...schemaFiles, ...keyFiles, ...broadCodeFiles]) {
     if (seenPaths.has(f)) continue;
     seenPaths.add(f);
     contentSources.push(f);
   }
 
   let contentBlocks = "";
-  let budget = 48_000;
+  let budget = SNAPSHOT_MAX_CHARS;
+  const totalSources = contentSources.length;
+  let includedSources = 0;
+  const MAX_FILES = SNAPSHOT_MAX_FILES;
 
   for (const file of contentSources) {
-    if (budget <= 0) break;
-    const content = await readFileSafe(file, Math.min(budget, 6_000));
+    if (budget <= 0 || includedSources >= MAX_FILES) break;
+    const content = await readFileSafe(file, Math.min(budget, SNAPSHOT_MAX_FILE_CHARS));
     if (!content) continue;
     contentBlocks += `\n\n=== ${rel(file)} ===\n${content}`;
     budget -= content.length;
+    includedSources += 1;
   }
+
+  const omitted = Math.max(totalSources - includedSources, 0);
 
   return [
     `TARGET URL: ${targetUrl}`,
     `REPO PATH: ${repoPath}`,
+    `SNAPSHOT FILES INCLUDED: ${includedSources}/${totalSources}${omitted ? ` (omitted ${omitted} due to size budget)` : ""}`,
     ignoredStr ? `\nGIT IGNORED PATHS:\n${ignoredStr}` : "",
     `\n## Repository File Tree\n${tree}`,
     `\n## Key File Contents${contentBlocks}`,

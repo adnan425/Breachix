@@ -10,9 +10,11 @@
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",
     "db:generate": "prisma generate",
-    "db:prepare": "prisma migrate deploy && prisma generate"
+    "db:prepare": "prisma migrate deploy && prisma generate",
+    "trigger": "npx trigger.dev@latest dev"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.117",
     "@base-ui/react": "^1.4.0",
     "@prisma/adapter-better-sqlite3": "^7.7.0",
     "@prisma/client": "^7.7.0",

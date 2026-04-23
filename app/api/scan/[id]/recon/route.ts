@@ -1,4 +1,5 @@
-import { getScan, getSettings, updateReconRunId } from "@/lib/queries";
+import { getScan, updateReconRunId } from "@/lib/queries";
+import { getRuntimeAIConfig } from "@/lib/runtime-ai";
 import { tasks } from "@trigger.dev/sdk/v3";
 import type { reconLiteAgent } from "@/src/trigger/recon-lite-agent";
 
@@ -6,6 +7,7 @@ export async function POST(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const runtimeAI = getRuntimeAIConfig();
   const { id } = await params;
   const scan = await getScan(id);
   if (!scan) return Response.json({ error: "Not found" }, { status: 404 });
@@ -21,14 +23,13 @@ export async function POST(
     return Response.json({ error: "Reconnaissance is already running for this scan." }, { status: 409 });
   }
 
-  const settings = await getSettings();
-
   let handle: { id: string };
   try {
     handle = await tasks.trigger<typeof reconLiteAgent>("recon-lite-agent", {
       scanId: scan.id,
-      ollamaUrl: settings.ollamaUrl,
-      model: settings.model,
+      baseUrl: runtimeAI.baseUrl,
+      model: runtimeAI.model,
+      apiKey: runtimeAI.apiKey,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Trigger failed";
